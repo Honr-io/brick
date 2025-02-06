@@ -21,6 +21,22 @@ enum UpsertMethod {
   upsert,
 }
 
+class _AssociationInfoToUpsert{
+  Map<String, dynamic> serializedInstance;
+  UpsertMethod method;
+  Type type;
+  Query? query;
+  ModelRepository<SupabaseModel>? repository;
+
+  _AssociationInfoToUpsert({
+    required this.serializedInstance,
+    required this.method,
+    required this.type,
+    this.query,
+    this.repository,
+  });
+}
+
 /// Retrieves from a Supabase server
 class SupabaseProvider implements Provider<SupabaseModel> {
   /// The client used to connect to the Supabase server.
@@ -108,13 +124,21 @@ class SupabaseProvider implements Provider<SupabaseModel> {
     final adapter = modelDictionary.adapterFor[TModel]!;
     final output = await adapter.toSupabase(instance, provider: this, repository: repository);
 
-    return await recursiveAssociationUpsert(
+    final result = await recursiveAssociationUpsert(
       output,
       method: UpsertMethod.insert,
       type: TModel,
       query: query,
       repository: repository,
-    ) as TModel;
+    ) as TModel?;
+
+    if (result == null) {
+      // Information of the exact error is not available here, but logged earlier 
+      // in recursiveAssociationUpsert
+      logger.finest('Failed to upsert $TModel');
+      return instance;
+    }
+    return result;
   }
 
   /// In almost all cases, use [upsert]. This method is provided for cases when a table's
@@ -127,13 +151,21 @@ class SupabaseProvider implements Provider<SupabaseModel> {
     final adapter = modelDictionary.adapterFor[TModel]!;
     final output = await adapter.toSupabase(instance, provider: this, repository: repository);
 
-    return await recursiveAssociationUpsert(
+    final result = await recursiveAssociationUpsert(
       output,
       method: UpsertMethod.update,
       type: TModel,
       query: query,
       repository: repository,
-    ) as TModel;
+    ) as TModel?;
+
+    if (result == null) {
+      // Information of the exact error is not available here, but logged earlier 
+      // in recursiveAssociationUpsert
+      logger.finest('Failed to upsert $TModel');
+      return instance;
+    }
+    return result;
   }
 
   /// Association models are upserted recursively before the requested instance is upserted.
@@ -150,15 +182,21 @@ class SupabaseProvider implements Provider<SupabaseModel> {
   }) async {
     final adapter = modelDictionary.adapterFor[TModel]!;
     final output = await adapter.toSupabase(instance, provider: this, repository: repository);
-    final providerQuery = query?.providerQueries[SupabaseProvider] as SupabaseProviderQuery?;
 
-    return await recursiveAssociationUpsert(
+    final result = await recursiveAssociationUpsert(
       output,
-      method: providerQuery?.upsertMethod ?? UpsertMethod.upsert,
       type: TModel,
       query: query,
       repository: repository,
-    ) as TModel;
+    ) as TModel?;
+
+    if (result == null) {
+      // Information of the exact error is not available here, but logged earlier 
+      // in recursiveAssociationUpsert
+      logger.finest('Failed to upsert $TModel');
+      return instance;
+    }
+    return result;
   }
 
   /// Used by [recursiveAssociationUpsert], this performs the upsert to Supabase
@@ -210,7 +248,7 @@ class SupabaseProvider implements Provider<SupabaseModel> {
   /// Discover all SupabaseModel-like associations of a serialized instance and
   /// upsert them recursively before the requested instance is upserted.
   @protected
-  Future<SupabaseModel> recursiveAssociationUpsert(
+  Future<SupabaseModel?> recursiveAssociationUpsert(
     Map<String, dynamic> serializedInstance, {
     UpsertMethod method = UpsertMethod.upsert,
     required Type type,
@@ -223,31 +261,69 @@ class SupabaseProvider implements Provider<SupabaseModel> {
     final associations = adapter.fieldsToSupabaseColumns.values
         .where((a) => a.association && a.associationType != null);
 
+    List<_AssociationInfoToUpsert> associationsToUpsert = [];
+
     for (final association in associations) {
       if (!serializedInstance.containsKey(association.columnName)) {
         continue;
       }
 
-      if (serializedInstance[association.columnName] is! Map) {
-        continue;
+      if (serializedInstance[association.columnName] is Map) {
+        await recursiveAssociationUpsert(
+          Map<String, dynamic>.from(serializedInstance[association.columnName]),
+          type: association.associationType!,
+          query: query,
+          repository: repository,
+        );
+        if (association.foreignKey != null) {
+          serializedInstance[association.foreignKey!] = serializedInstance[association.columnName]['id'];  /// Very bold assumption in general case
+        }
+        serializedInstance.remove(association.columnName);
+      } else if (serializedInstance[association.columnName] is List) {
+        for (var item in serializedInstance[association.columnName]) {
+          associationsToUpsert.add(
+            _AssociationInfoToUpsert(
+              serializedInstance: Map<String, dynamic>.from(item),
+              method: method,
+              type: association.associationType!,
+              query: query,
+              repository: repository,
+            ),
+          );
+        }
+        serializedInstance.remove(association.columnName);
+      } else if (association.associationIsNullable && association.foreignKey != null && serializedInstance[association.columnName] == null) {
+        serializedInstance.remove(association.columnName);
+        serializedInstance[association.foreignKey!] = null;
       }
+    }
 
-      await recursiveAssociationUpsert(
-        Map<String, dynamic>.from(serializedInstance[association.columnName]),
+    SupabaseModel? result;
+    try {
+      result = await upsertByType(
+        serializedInstance,
         method: method,
-        type: association.associationType!,
+        type: type,
         query: query,
         repository: repository,
       );
-      serializedInstance.remove(association.columnName);
+    } catch (e) {
+      // Just logging the error, because allowing it to be thrown here propagates it all the way up,
+      // and after being thrown in the inner-most recursive call, previous calls don't attempt upsertByType
+      // and, consequently, don't add the upsert to retry queue
+      logger.finest('Error upserting $type: $e');
     }
 
-    return await upsertByType(
-      serializedInstance,
-      method: method,
-      type: type,
-      query: query,
-      repository: repository,
-    );
+    for (final association in associationsToUpsert) {
+      await recursiveAssociationUpsert(
+        association.serializedInstance,
+        method: association.method,
+        type: association.type,
+        query: association.query,
+        repository: association.repository,
+      );
+    }
+
+    return result;
   }
 }
