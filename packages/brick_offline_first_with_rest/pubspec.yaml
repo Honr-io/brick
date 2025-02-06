@@ -11,10 +11,14 @@ environment:
   sdk: ">=2.18.0 <4.0.0"
 
 dependencies:
-  brick_core: ^1.3.0
-  brick_offline_first: ">=3.0.0 <4.0.0"
-  brick_rest: ">=3.0.3 <4.0.0"
-  brick_sqlite: ">=3.0.0 <4.0.0"
+  brick_core:
+    path: ../brick_core
+  brick_offline_first:
+    path: ../brick_offline_first
+  brick_rest:
+    path: ../brick_rest
+  brick_sqlite:
+    path: ../brick_sqlite
   collection: ">=1.15.0 <2.0.0"
   dart_style: ">=2.0.0 <3.0.0"
   http: ">=1.0.0 <2.0.0"
