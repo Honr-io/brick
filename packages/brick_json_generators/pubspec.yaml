@@ -11,8 +11,10 @@ environment:
 
 dependencies:
   analyzer: ">=6.0.0 <7.0.0"
-  brick_build: ">=3.3.1 <4.0.0"
-  brick_core: ">=1.4.0 <2.0.0"
+  brick_build:
+    path: ../brick_build
+  brick_core:
+    path: ../brick_core
   build: ">=2.0.0 <3.0.0"
   dart_style: ">=2.0.0 <3.0.0"
   source_gen: ">=1.2.2 <2.0.0"
