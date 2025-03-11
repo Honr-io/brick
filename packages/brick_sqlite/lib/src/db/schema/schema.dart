@@ -1,5 +1,6 @@
 // Heavily, heavily inspired by [Aqueduct](https://github.com/stablekernel/aqueduct/blob/master/aqueduct/lib/src/db/schema/schema_builder.dart)
 // Unfortunately, some key differences such as inability to use mirrors and the sqlite vs postgres capabilities make DIY a more palatable option than retrofitting
+import 'package:brick_sqlite/db.dart';
 import 'package:brick_sqlite/src/db/column.dart';
 import 'package:brick_sqlite/src/db/migration.dart';
 import 'package:brick_sqlite/src/db/migration_commands/create_index.dart';
@@ -167,8 +168,10 @@ class Schema {
         orElse: () => throw StateError('Index ${command.name} must be inserted first'),
       );
       table.indices.removeWhere((i) => i.name == command.name);
+    } else if (command is CustomCommand) {
+      // not supposed to generate any schema changes
     } else {
-      throw UnimplementedError('Cannot create Dart class for ${command.statement}');
+      throw UnimplementedError('Cannot create Dart class for $command');
     }
 
     return tables;

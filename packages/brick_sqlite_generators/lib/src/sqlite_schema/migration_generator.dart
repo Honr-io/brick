@@ -13,6 +13,7 @@ const _insertForeignKeyChecker = TypeChecker.fromRuntime(InsertForeignKey);
 const _insertTableChecker = TypeChecker.fromRuntime(InsertTable);
 const _renameColumnChecker = TypeChecker.fromRuntime(RenameColumn);
 const _renameTableChecker = TypeChecker.fromRuntime(RenameTable);
+const _customCommandChecker = TypeChecker.fromRuntime(CustomCommand);
 
 /// [Migration] is an abstract class; this is a library-specific implementation
 /// to access migration properties.
@@ -123,6 +124,10 @@ class MigrationGenerator extends Generator {
         return RenameTable(
           reader.read('oldName').stringValue,
           reader.read('newName').stringValue,
+        );
+      } else if (_customCommandChecker.isExactlyType(object.type!)) {
+        return CustomCommand(
+          reader.read('_statement').stringValue,
         );
       } else {
         throw UnimplementedError('Cannot create migration line for ${object.type}');
